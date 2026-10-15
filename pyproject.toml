@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "raas-vo"
+version = "0.1.0"
+readme = "README.md"
+description = "RAAS-VO implementation"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "scipy>=1.10", "pandas>=2.0", "matplotlib>=3.7", "cvxpy>=1.4", "clarabel>=0.7"]
+
+[tool.setuptools.packages.find]
+include = ["raas_vo*"]

@@ -1,0 +1,21 @@
+{
+  "scale_min": 0.1,
+  "scale_max": 10,
+  "origin": [
+    0,
+    0,
+    0
+  ],
+  "bias_bound": 0.1,
+  "delay_bound": 0.04,
+  "reference_bound": 0.0346410162,
+  "velocity_error": 0.1,
+  "acceleration_bound": 1,
+  "speed_bound": 1.2,
+  "rotation_bound_deg": 0.2,
+  "solver_padding": 1e-05,
+  "capacity": 8,
+  "position_tolerance": 0.25,
+  "rotation_tolerance_deg": 2,
+  "seed": 13
+}
