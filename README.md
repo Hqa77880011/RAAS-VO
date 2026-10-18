@@ -45,3 +45,6 @@ python -m raas_vo.compare --inputs "runs/*/metrics.csv" --reference joint --metr
 
 The comparison command averages repeated rows within the specified independent unit, bootstraps units and applies paired Wilcoxon/Holm comparisons per metric.
 
+## Reproduction logic conventions
+
+work counts actual convex solver calls, including rejected/infeasible histories and unresolved calls. An infeasible first endpoint costs one solve, and a successfully bounded scale interval costs two; filtering a history does not erase its computation cost.

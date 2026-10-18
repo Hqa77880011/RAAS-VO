@@ -26,15 +26,17 @@ def domain(v, z, q, epsilon, c, mode, calibration=None):
         for residual, velocity, bound in zip(calibration['residual'], calibration['velocity'], calibration['bound']):
             constraints += [cp.norm(residual - bias - velocity * delay) <= bound]
     limits = []
+    solves = 0
     for sign in [1, -1]:
         problem = cp.Problem(cp.Minimize(sign * scale), constraints)
         problem.solve(solver='CLARABEL')
+        solves += 1
         if problem.status == 'infeasible':
-            return None, 'infeasible'
+            return None, 'infeasible', solves
         if problem.status != 'optimal':
-            return [c['scale_min'], c['scale_max']], 'unresolved'
+            return [c['scale_min'], c['scale_max']], 'unresolved', solves
         limits.append(float(scale.value))
-    return [limits[0] - c['solver_padding'], limits[1] + c['solver_padding']], 'empirical'
+    return [limits[0] - c['solver_padding'], limits[1] + c['solver_padding']], 'empirical', solves
 
 
 def prepare(c, out, input_path):
@@ -68,6 +70,7 @@ def run(c, out):
             limits = []
             kept = []
             unresolved = False
+            charged_solves = 0
             mode = 'independent' if method == 'inflated-radius' else method
             mode = mode if mode in ['independent', 'bias-only'] else 'joint'
             for h in active:
@@ -75,8 +78,9 @@ def run(c, out):
                 error_bound = error_bound + c['velocity_error'] * c['delay_bound'] + .5 * c['acceleration_bound'] * c['delay_bound'] ** 2
                 if method == 'inflated-radius':
                     error_bound = error_bound + np.sqrt(3) * c['bias_bound'] + c['speed_bound'] * c['delay_bound']
-                scale_range, status = domain(paths[h, anchors], raw['anchors'][anchors],
+                scale_range, status, solves = domain(paths[h, anchors], raw['anchors'][anchors],
                                              raw['velocity'][anchors], error_bound, c, mode, calibration)
+                charged_solves += solves
                 if scale_range is not None:
                     kept.append(h)
                     limits.append(scale_range)
@@ -86,7 +90,7 @@ def run(c, out):
                 records.append(dict(method=method, time=raw['time'][t], accepted=False, status='inconsistent',
                                     branches=0, translation_error=np.nan, rotation_error=np.nan,
                                     radius=np.nan, diameter=np.nan, scale_span=np.nan, reset=False,
-                                    truncated=truncated, work=len(kept), latency_ms=1000 * (time.perf_counter() - start)))
+                                    truncated=truncated, work=charged_solves, latency_ms=1000 * (time.perf_counter() - start)))
                 continue
             selected = previous if previous in active else active[0]
             idx = active.index(selected)
@@ -104,7 +108,7 @@ def run(c, out):
                                 branches=len(active), translation_error=translation_error, rotation_error=rotation_error,
                                 radius=radius, diameter=diameter, scale_span=max(v[1] for v in limits) - min(v[0] for v in limits),
                                 reset=previous is not None and selected != previous, truncated=truncated,
-                                work=2 * len(active), latency_ms=1000 * (time.perf_counter() - start)))
+                                work=charged_solves, latency_ms=1000 * (time.perf_counter() - start)))
             previous = selected
     pd.DataFrame(records).to_csv(out / 'predictions.csv', index=False)
 
