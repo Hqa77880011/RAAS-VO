@@ -2,49 +2,50 @@
 
 Implementation of **Reference-anchored ambiguity sets for metric visual odometry in repetitive scenes.**
 
-## Install
+## Installation
 
-Use Python 3.11 in an isolated environment, then run from the repository root:
+Requires Python >=3.10.
 
 ```bash
 python -m pip install -e .
 ```
 
-## Data
+Inspection environment: Python 3.13.5, NumPy 2.1.3 and SciPy 1.15.3. Verification covers Python syntax, JSON/TOML and README CLI options against parser definitions; training and evaluation were not run. CVXPY/CLARABEL runtime dependencies were not installed in this inspection environment.
+
+## Data and preprocessing
 
 Input NPZ arrays are `positions: (H,T,3)` and `rotations: (H,T,3,3)` for complete causal frontend histories; `anchors: (T,3)` with NaN at missing references; `velocity: (T,3)`; `visual_bound: (T,)`; `time`; and evaluation-only `truth_position,truth_rotation`. The monocular frontend must generate histories without test trajectory alignment. Coordinates use the fixed supplied metric registration. Optional `cal_residual,cal_velocity,cal_bound` transfer a separate bias/timing calibration domain. Sparse references can be exported from the permitted trajectory source or from a finite controlled ambiguity experiment.
 
-## Workflow
-
 ```bash
-python -m raas_vo prepare --input data/branches.npz
-python -m raas_vo run
-python -m raas_vo evaluate
-python -m raas_vo plot
+python -m raas_vo prepare --input data/branches.npz --config config.json --output runs/full
 ```
 
-Main commands accept `--config config.json` and `--output runs/default`. Keep each seed/condition in its own output directory. The resolved configuration is written to `settings.json`.
+## Run
 
-## Configuration
+```bash
+python -m raas_vo run --config config.json --output runs/full
+```
 
-`scale_min,scale_max` define metric scale. `origin` is the fixed translation registration. `bias_bound,delay_bound` define shared reference nuisance bounds. `reference_bound,velocity_error,acceleration_bound` bound observation/time-model error. `capacity` is the retained-history budget. `position_tolerance,rotation_tolerance_deg` qualify the actual representative. `solver_padding` widens numerical scale endpoints. Training epochs, batch size, learning rate and seed use the defaults shown in `config.json` where applicable.
+`config.json` records the method settings and seed `13`; the resolved configuration is saved as `runs/full/settings.json`. Keep separate output directories for different seeds and variants.
+
+## Evaluation
+
+```bash
+python -m raas_vo evaluate --config config.json --output runs/full
+```
+
+## Ablations
+
+Supported controls: `joint`, `independent`, `bias-only`, `inflated-radius`, `single`, `ignore-truncation`.
+
+The run command evaluates these controls together.
 
 ## Outputs
 
+All main outputs are written below `runs/full/`.
+
 `predictions.csv` reports accepted/unresolved/inconsistent status, branch count, scale span, diameter, representative radius, lineage resets and charged solves. `metrics.csv` reports translation/rotation error, availability, joint/conditional false commitment, tracking loss, heuristic deletion and cost.
 
-## Implementation and controls
-
-CLARABEL solves the joint convex scale/shared-bias/shared-delay domains. A feasible witness alone is not used as an exclusion proof. Solver-uncertain branches remain unresolved. Branch capacity deletion persists as truncation and prevents qualified output unless explicitly ignored by a diagnostic control. Position radius checks both scale endpoints from every retained history; orientation spread is checked separately. Frontend trajectories and enclosures are explicit inputs rather than inferred from ground truth.
-
-Controls: `joint`, `independent`, `bias-only`, `inflated-radius`, `single`, `ignore-truncation`. The run command evaluates the listed controls together.
-
 ```bash
-python -m raas_vo.compare --inputs "runs/*/metrics.csv" --reference joint --metrics translation_rmse availability joint_false_commit --unit seed
+python -m raas_vo plot --config config.json --output runs/full
 ```
-
-The comparison command averages repeated rows within the specified independent unit, bootstraps units and applies paired Wilcoxon/Holm comparisons per metric.
-
-## Reproduction logic conventions
-
-work counts actual convex solver calls, including rejected/infeasible histories and unresolved calls. An infeasible first endpoint costs one solve, and a successfully bounded scale interval costs two; filtering a history does not erase its computation cost.
