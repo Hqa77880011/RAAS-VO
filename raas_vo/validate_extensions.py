@@ -1,7 +1,6 @@
 """Image frontend, geometry, point estimates and a reduced finite replay."""
 import json
 from pathlib import Path
-import cv2
 import numpy as np
 import pandas as pd
 from .frontend import generate
