@@ -34,11 +34,17 @@ def main():
     data=np.load(args.input,allow_pickle=False);config=json.loads(Path(args.config).read_text(encoding="utf-8"));rows=[]
     frames=np.flatnonzero(np.isfinite(data["anchors"]).all(1))
     for count,frame in enumerate(frames):
-        past=frames[:count];bounds=config["reference_bound"]+data["visual_bound"][past]
-        for first in range(len(data["positions"])):
-            info=scale_information(data["positions"][first,frames[:count+1]],data["velocity"][frames[:count+1]])
-            for second in range(first+1,len(data["positions"])):
-                margin=separation(data["positions"][first,frame],data["positions"][second,frame],data["positions"][first,past],data["positions"][second,past],data["anchors"][past],data["velocity"][past],data["velocity"][frame],bounds,[config["reference_bound"]+data["visual_bound"][frame]]*2,config)
+        past=frames[:count]
+        remainder=config["velocity_error"]*config["delay_bound"]+.5*config["acceleration_bound"]*config["delay_bound"]**2
+        bounds=config["reference_bound"]+data["visual_bound"][past]+remainder
+        dynamic="anchor_positions" in data.files
+        active=np.flatnonzero(data["alive"][:,frame]) if dynamic else np.arange(len(data["positions"]))
+        for index,first in enumerate(active):
+            first_history=data["anchor_positions"][first,frame,:count+1] if dynamic else data["positions"][first,frames[:count+1]]
+            info=scale_information(first_history,data["velocity"][frames[:count+1]])
+            for second in active[index+1:]:
+                second_history=data["anchor_positions"][second,frame,:count] if dynamic else data["positions"][second,past]
+                margin=separation(data["positions"][first,frame],data["positions"][second,frame],first_history[:count],second_history,data["anchors"][past],data["velocity"][past],data["velocity"][frame],bounds,[config["reference_bound"]+data["visual_bound"][frame]+remainder]*2,config)
                 rows.append(dict(frame=int(frame),first=first,second=second,scale_information=info,separation_margin=margin))
     output=Path(args.output);output.parent.mkdir(parents=True,exist_ok=True);pd.DataFrame(rows).to_csv(output,index=False)
 
