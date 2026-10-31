@@ -12,3 +12,6 @@ dependencies = ["numpy>=1.24", "scipy>=1.10", "pandas>=2.0", "matplotlib>=3.7", 
 
 [tool.setuptools.packages.find]
 include = ["raas_vo*"]
+
+[project.optional-dependencies]
+frontend = ["opencv-python>=4.8"]

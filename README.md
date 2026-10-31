@@ -62,4 +62,22 @@ python -m raas_vo.validate
 
 The small finite replay checks a known scale-two interval and inconsistent reference constraints, sticky capacity truncation versus ignore-truncation acceptance, hand-computed coverage/availability/false-commitment rates, label-free causal outputs, file-backed preparation/run/evaluation and plotting. No training is applicable to this optimization-only layer.
 
-Remaining scope includes causal frontend/history generation, finite diagnostic mask/event suites, geometry excitation/separation diagnostics, residual-ranked/point-penalty/matched-work controls, full TUM/KITTI manifests and runs, and real sequence-level statistical comparisons. Host solve latency and operation counts are not Raspberry Pi/GPU energy or full-frontend latency measurements. No reported paper number is inferred from the functional replay.
+The extensions below provide causal frontend/history generation, geometry, point controls and a finite-suite runner. Original dataset manifests, stored finite outcomes, full real sequences and their statistical comparisons remain unrun. Host solve latency and operation counts are not Raspberry Pi/GPU energy or full-frontend latency measurements. No reported paper number is inferred from the functional replay.
+
+## Causal frontend and executable diagnostic suite
+
+```bash
+python -m pip install -e '.[frontend]'
+python -m raas_vo.frontend --frames data/sequence/images --references data/sequence/references.npz --intrinsics data/sequence/K.json --capacity 8 --window 8 --visual-radius 0.05 --output data/sequence/branches.npz
+python -m raas_vo.geometry --input data/branches.npz --config config.json --output runs/geometry.csv
+python -m raas_vo.finite_suite --output runs/finite --scenarios 20 --opportunities 50 --seed 13 --run
+python -m raas_vo.validate_extensions
+```
+
+The included monocular ORB / triangulation / landmark-PnP frontend now generates causal histories from images. It expands nearest/ambiguous-second descriptor associations, initializes a common monocular gauge, triangulates persistent landmarks, and performs RANSAC PnP with ten-step LM refinement in an eight-frame landmark window. Input references.npz supplies anchors[T,3] and time[T]; K.json is the measured3x3 intrinsic matrix. Nominal metric velocity uses only the latest two already available references (zero until available); its error bound and visual radius must come from the permitted calibration protocol. No ground-truth trajectory or full-test alignment enters the frontend.
+
+Snapshots store current alive slots, lineage IDs and causal anchor centers; reference processing never substitutes the final beam for an earlier beam. Capacity deletion remains sticky. Total visual tracking loss raises a specific error rather than fabricating a pose. The native frontend is a reproducible implementation choice, not DSO/ORB-SLAM/DROID/DPVO result reproduction.
+
+Geometry diagnostics implement nuisance-projected scale information and the convex distance between current supports under all previous anchor constraints. New point-penalty and matched-work-point controls fit residual-penalized point estimates. The latter receives at most the joint gate's actual same-frame solve budget, ranks candidates by past residuals, and reports actual charged solves. The point penalty defaults to.01 and normalized residual acceptance threshold to1; these are explicit configurable baseline conventions, never chosen using test labels.
+
+The finite-suite entry generates20 x50 opportunities with eight aliases/four anchors, shared .08m bias/.04s delay, .02 coordinate jitter, low-excitation and delay/scale-drift stresses, then actually runs all controls. This independently implemented synthetic suite does not reproduce the manuscript's stored outcomes or establish its performance. The small verification runs actual ORB/triangulation/PnP on four rendered3D frames, compares a separately processed causal video prefix, verifies scale-information=2, support margin=1.6 and point scale=2/work=2, and runs six-frame finite controls while checking matched-work never exceeds the joint budget. Full real sequences and external frontend comparisons remain unrun.
