@@ -29,24 +29,31 @@ def domain(v, z, q, epsilon, c, mode, calibration=None):
     solves = 0
     for sign in [1, -1]:
         problem = cp.Problem(cp.Minimize(sign * scale), constraints)
-        problem.solve(solver='CLARABEL')
+        try:
+            problem.solve(solver='CLARABEL')
+        except cp.error.SolverError:
+            return [c['scale_min'], c['scale_max']], 'unresolved', solves + 1
         solves += 1
         if problem.status == 'infeasible':
             return None, 'infeasible', solves
         if problem.status != 'optimal':
             return [c['scale_min'], c['scale_max']], 'unresolved', solves
         limits.append(float(scale.value))
-    return [limits[0] - c['solver_padding'], limits[1] + c['solver_padding']], 'empirical', solves
+    return [max(c['scale_min'], limits[0]-c['solver_padding']), min(c['scale_max'], limits[1]+c['solver_padding'])], 'empirical', solves
 
 
 def prepare(c, out, input_path):
     raw = np.load(input_path, allow_pickle=False)
-    required = {'positions', 'rotations', 'anchors', 'velocity', 'visual_bound', 'time', 'truth_position', 'truth_rotation'}
+    required = {'positions', 'rotations', 'anchors', 'velocity', 'visual_bound', 'time'}
     if not required <= set(raw.files):
         raise ValueError('Input requires ' + ', '.join(sorted(required)))
     h, t, d = raw['positions'].shape
     if d != 3 or raw['rotations'].shape != (h, t, 3, 3):
         raise ValueError('positions must be H,T,3 and rotations H,T,3,3')
+    if raw['anchors'].shape != (t, 3) or raw['velocity'].shape != (t, 3) or raw['visual_bound'].shape != (t,) or raw['time'].shape != (t,):
+        raise ValueError('anchors/velocity must be T,3; visual_bound/time must be T')
+    if not np.all(np.diff(raw['time']) > 0) or np.any(raw['visual_bound'] < 0):
+        raise ValueError('Require increasing timestamps and nonnegative visual bounds')
     np.savez_compressed(out / 'sequence.npz', **{key: raw[key] for key in raw.files})
 
 
@@ -87,9 +94,9 @@ def run(c, out):
                     unresolved |= status == 'unresolved'
             active = kept
             if not active:
-                records.append(dict(method=method, time=raw['time'][t], accepted=False, status='inconsistent',
+                records.append(dict(method=method, frame=t, time=raw['time'][t], accepted=False, status='inconsistent',
                                     branches=0, translation_error=np.nan, rotation_error=np.nan,
-                                    radius=np.nan, diameter=np.nan, scale_span=np.nan, reset=False,
+                                    radius=np.nan, diameter=np.nan, scale_span=np.nan, reset=False, covered=False, **{key: np.nan for key in ['position_x','position_y','position_z']+['rotation_'+str(i)+str(j) for i in range(3) for j in range(3)]},
                                     truncated=truncated, work=charged_solves, latency_ms=1000 * (time.perf_counter() - start)))
                 continue
             selected = previous if previous in active else active[0]
@@ -102,10 +109,18 @@ def run(c, out):
             rotation_radius = np.degrees(max(angular)) + c['rotation_bound_deg']
             accepted = radius <= c['position_tolerance'] and rotation_radius <= c['rotation_tolerance_deg'] and not unresolved
             accepted &= not truncated or method == 'ignore-truncation'
-            translation_error = np.linalg.norm(point - raw['truth_position'][t])
-            rotation_error = np.degrees(Rotation.from_matrix(rotations[selected, t].T @ raw['truth_rotation'][t]).magnitude())
-            records.append(dict(method=method, time=raw['time'][t], accepted=bool(accepted), status='unresolved' if unresolved else 'empirical',
-                                branches=len(active), translation_error=translation_error, rotation_error=rotation_error,
+            position_fields = dict(zip(['position_x','position_y','position_z'], point))
+            rotation_fields = {'rotation_'+str(i)+str(j): rotations[selected,t,i,j] for i in range(3) for j in range(3)}
+            covered = np.nan
+            if 'truth_position' in raw.files:
+                covered = False
+                for h, interval in zip(active, limits):
+                    vector = paths[h,t]
+                    scalar = np.dot(raw['truth_position'][t]-c['origin'],vector)/max(np.dot(vector,vector),1e-12)
+                    projected = np.asarray(c['origin'])+np.clip(scalar,*interval)*vector
+                    covered |= np.linalg.norm(projected-raw['truth_position'][t]) <= raw['visual_bound'][t]+1e-7
+            records.append(dict(method=method, frame=t, time=raw['time'][t], accepted=bool(accepted), status='unresolved' if unresolved else 'empirical',
+                                branches=len(active), **position_fields, **rotation_fields, covered=covered,
                                 radius=radius, diameter=diameter, scale_span=max(v[1] for v in limits) - min(v[0] for v in limits),
                                 reset=previous is not None and selected != previous, truncated=truncated,
                                 work=charged_solves, latency_ms=1000 * (time.perf_counter() - start)))
@@ -115,12 +130,21 @@ def run(c, out):
 
 def evaluate(c, out):
     data = pd.read_csv(out / 'predictions.csv')
+    raw = np.load(out / 'sequence.npz', allow_pickle=False)
+    if not {'truth_position','truth_rotation'} <= set(raw.files):
+        raise ValueError('Evaluation requires truth_position and truth_rotation; run itself is label-free')
     rows = []
     for method, g in data.groupby('method'):
+        indices = g.frame.to_numpy(dtype=int)
+        points = g[['position_x','position_y','position_z']].to_numpy()
+        orientations = g[['rotation_'+str(i)+str(j) for i in range(3) for j in range(3)]].to_numpy().reshape(-1,3,3)
+        g = g.copy()
+        g['translation_error'] = np.linalg.norm(points-raw['truth_position'][indices],axis=-1)
+        g['rotation_error'] = [np.degrees(Rotation.from_matrix(r.T@reference).magnitude()) if np.isfinite(r).all() else np.nan for r,reference in zip(orientations,raw['truth_rotation'][indices])]
         wrong = (g.translation_error > c['position_tolerance']) | (g.rotation_error > c['rotation_tolerance_deg'])
         accepted = g[g.accepted]
         rows.append(dict(method=method, translation_rmse=np.sqrt((g.translation_error ** 2).mean()),
-                         rotation_mean_deg=g.rotation_error.mean(), availability=g.accepted.mean(),
+                         rotation_mean_deg=g.rotation_error.mean(), invalid_output=float((~np.isfinite(g.translation_error)).mean()), set_coverage=float(g.covered.fillna(False).mean()), availability=g.accepted.mean(),
                          joint_false_commit=float((g.accepted & wrong).mean()),
                          conditional_false_commit=float(wrong[g.accepted].mean()) if len(accepted) else np.nan,
                          tracking_loss=float((g.branches == 0).mean()), branches=g.branches.mean(),
