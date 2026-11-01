@@ -1,4 +1,4 @@
-"""Reproducible finite corridor diagnostics, independent of manuscript results."""
+"""Seeded finite-corridor geometry diagnostics."""
 import argparse
 import json
 from pathlib import Path
